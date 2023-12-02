@@ -1,9 +1,295 @@
-#include "MiniC.tbl"                 /* Mini C table for appendix A */
+#include "MiniC.tbl"  
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdlib.h>              /* Mini C table for appendix A */
 //#define  NO_RULES    97            /* number of rules */
 //#define  GOAL_RULE  (NO_RULES+1)   /* accept rule */
 //#define  NO_SYMBOLS  85            /* number of grammar symbols */
 //#define  NO_STATES  153            /* number of states */
 #define  PS_SIZE    100              /* size of parsing stack */
+
+
+FILE *sourceFile;
+
+
+int superLetter(char ch);
+int superLetterOrDigit(char ch);
+int getNumber(char firstCharacter);
+int hexValue(char ch);
+void lexicalError(int n);
+
+#define NO_KEYWORD 7
+#define ID_LENGTH 12
+
+char *sourceFilePath;
+FILE *sourceFile;
+
+enum tsymbol { tnull=-1,
+    tnot,       tnotequ,    tremainder, tremAssign, tident,     tnumber,
+	/* 0          1            2         3            4          5     */
+	tand,       tlparen,    trparen,    tmul,       tmulAssign, tplus,
+	/* 6          7            8         9           10         11     */
+    tinc,       taddAssign, tcomma,     tminus,     tdec,	    tsubAssign,
+	/* 12         13          14        15           16         17     */
+	tdiv,       tdivAssign,   tcolon, tsemicolon, tless,      tlesse,    
+	/* 18         19          20        21           22         23     */
+   tassign,  tequal,     tgreat,     tgreate,    tlbracket,  trbracket, 
+	/* 24         25          26        27           28         29     */
+	teof, 		tbreak,			tcase,			tconst,			tcontinue,		tdefault,
+	/* 30         31          32        33           34         35     */
+    tdo,     telse,     tfor,				 tif,        tint,       treturn,    
+	/* 36         37          38        39                             */
+    tswitch,  tvoid,    twhile,     tlbrace,    tor,        trbrace
+};
+
+char *tokenName[] = {
+    "!",        "!=",      "%",       "%=",     "%ident",   "%number",
+	/* 0          1           2         3          4          5        */
+    "&&",       "(",       ")",       "*",      "*=",       "+",
+	/* 6          7           8         9         10         11        */
+    "++",       "+=",      ",",       "-",      "--",	    "-=",
+	/* 12         13         14        15         16         17        */
+    "/",        "/=",			":",      ";",       "<",      "<=", 
+	/* 18         19         20        21         22         23        */
+    "=",   		 "==",       ">",       ">=",      "[",      "]",  
+	/* 24         25         26        27         28         29        */
+	"eof",        "break",      "case" ,      "const"  ,    "continue"  , "default" 
+	/* 30         31         32        33         34         35        */
+  "do"  ,       "else"   ,    "for"    ,    "if"    ,     "int"  ,      "return"
+	/* 36         37         38        39                              */
+  "switch"  ,   "void"     ,  "while"  ,    "{"   ,       "||"    ,     "}"
+};
+
+char *keyword[NO_KEYWORD] = { 
+    "const",  "else",    "if",    "int",    "return",  "void",    "while"
+};
+
+enum tsymbol tnum[NO_KEYWORD] = {
+    tconst,    telse,     tif,     tint,     treturn,   tvoid,     twhile
+};
+
+struct tokenType {
+	int number;
+	union {
+		char id[ID_LENGTH];
+		int num;
+	} value;
+};
+
+struct tokenType scanner()
+{
+ struct tokenType token;
+ int i, index;
+ char ch, id[ID_LENGTH];
+ 
+token.number = tnull;
+
+do {
+     while (isspace(ch = fgetc(sourceFile))) ;	// state 1: skip blanks
+     if (superLetter(ch)) { // identifier or keyword
+       i = 0;
+       do {
+            if (i < ID_LENGTH) id[i++] = ch;
+            ch = fgetc(sourceFile);
+       } while (superLetterOrDigit(ch));
+	   if (i >= ID_LENGTH) lexicalError(1);
+       id[i] = '\0';
+       ungetc(ch, sourceFile);  //  retract
+       // find the identifier in the keyword table
+	   for (index=0; index < NO_KEYWORD; index++)
+		   if (!strcmp(id, keyword[index])) break;
+	   if (index < NO_KEYWORD)    // found, keyword exit
+         token.number = tnum[index];
+       else {                     // not found, identifier exit
+			  token.number = tident;
+			  strcpy(token.value.id, id);
+       }
+     }  // end of identifier or keyword
+     else if (isdigit(ch)) {  // number
+            token.number = tnumber;
+            token.value.num = getNumber(ch);
+          }
+     else switch (ch) {  // special character
+            case '/':
+                      ch = fgetc(sourceFile);
+                      if (ch == '*')			// text comment
+						  do {
+							  while (ch != '*') ch = fgetc(sourceFile);
+							  ch = fgetc(sourceFile);
+						  } while (ch != '/');
+                      else if (ch == '/')		// line comment
+						  while (fgetc(sourceFile) != '\n') ;
+                      else if (ch == '=')  token.number = tdivAssign;
+                      else { token.number = tdiv;
+                             ungetc(ch, sourceFile); // retract
+					  }
+                      break;
+            case '!':
+                      ch = fgetc(sourceFile);
+                      if (ch == '=')  token.number = tnotequ;
+                        else { token.number = tnot;
+                               ungetc(ch, sourceFile); // retract
+                             }
+                      break;
+            case '%': 
+                      ch = fgetc(sourceFile);
+					  if (ch == '=') {
+						  token.number = tremAssign;
+					  }
+					  else {
+						  token.number = tremainder;
+						  ungetc(ch, sourceFile);
+					  }
+					  break;
+            case '&':
+                      ch = fgetc(sourceFile);
+                      if (ch == '&')  token.number = tand;
+						else { lexicalError(2);
+                               ungetc(ch, sourceFile);  // retract
+                        }
+                      break;
+            case '*':
+                      ch = fgetc(sourceFile);
+                      if (ch == '=')  token.number = tmulAssign;
+                        else { token.number = tmul;
+                               ungetc(ch, sourceFile);  // retract
+                             }
+                      break;
+            case '+':
+                      ch = fgetc(sourceFile);
+                      if (ch == '+')  token.number = tinc;
+                        else if (ch == '=') token.number = taddAssign;
+                           else { token.number = tplus;
+                                  ungetc(ch, sourceFile);  // retract
+                                }
+                      break;
+            case '-':
+                      ch = fgetc(sourceFile);
+                      if (ch == '-')  token.number = tdec;
+                         else if (ch == '=') token.number = tsubAssign;
+                              else { token.number = tminus;
+                                     ungetc(ch, sourceFile);  // retract
+							  }
+                      break;
+            case '<':
+                      ch = fgetc(sourceFile);
+                      if (ch == '=') token.number = tlesse;
+                         else { token.number = tless;
+                                ungetc(ch, sourceFile);  // retract
+						 }
+                      break;
+            case '=':
+                      ch = fgetc(sourceFile);
+                      if (ch == '=')  token.number = tequal;
+                        else { token.number = tassign;
+                               ungetc(ch, sourceFile);  // retract
+                             }
+                      break;
+            case '>':
+                      ch = fgetc(sourceFile);
+                      if (ch == '=') token.number = tgreate;
+                        else { token.number = tgreat;
+                               ungetc(ch, sourceFile);  // retract
+                             }
+                      break;
+            case '|':
+                      ch = fgetc(sourceFile);
+                      if (ch == '|')  token.number = tor;
+					  else { lexicalError(3);
+                             ungetc(ch, sourceFile);  // retract
+                           }
+                      break;
+            case '(': token.number = tlparen;         break;
+            case ')': token.number = trparen;         break;
+            case ',': token.number = tcomma;          break;
+            case ';': token.number = tsemicolon;      break;
+            case '[': token.number = tlbracket;       break;
+            case ']': token.number = trbracket;       break;
+            case '{': token.number = tlbrace;         break;
+            case '}': token.number = trbrace;         break;
+            case EOF: token.number = teof;            break;
+			default:  {
+						printf("Current character : %c", ch);
+						lexicalError(4);
+						break;
+					  }
+
+          } // switch end
+   } while (token.number == tnull);
+   return token;
+} // end of scanner
+
+void lexicalError(int n)
+{
+	printf(" *** Lexical Error : ");
+	switch (n) {
+		case 1: printf("an identifier length must be less than 12.\n");
+				break;
+		case 2: printf("next character must be &\n");
+				break;
+		case 3: printf("next character must be |\n");
+				break;
+		case 4: printf("invalid character\n");
+				break;
+	}
+}
+
+int superLetter(char ch)
+{
+	if (isalpha(ch) || ch == '_') return 1;
+		else return 0;
+}
+
+int superLetterOrDigit(char ch)
+{
+	if (isalnum(ch) || ch == '_') return 1;
+		else return 0;
+}
+
+int getNumber(char firstCharacter)
+{
+	int num = 0;
+	int value;
+	char ch;
+
+	if (firstCharacter == '0') {
+		ch = fgetc(sourceFile);
+		if ((ch == 'X') || (ch == 'x'))	{		// hexa decimal
+			while ((value=hexValue(ch=fgetc(sourceFile))) != -1)
+				num = 16*num + value;
+		}
+		else if ((ch >= '0') && (ch <= '7'))	// octal
+				do {
+					num = 8*num + (int)(ch - '0');
+					ch = fgetc(sourceFile);
+				} while ((ch >= '0') && (ch <= '7'));
+			 else num = 0;						// zero
+	} else {									// decimal
+			ch = firstCharacter;
+			do {
+				num = 10*num + (int)(ch - '0');
+				ch = fgetc(sourceFile);
+			} while (isdigit(ch));
+	}
+    ungetc(ch, sourceFile);  /*  retract  */
+	return num;
+}
+
+int hexValue(char ch)
+{
+	switch (ch) {
+		case '0': case '1': case '2': case '3': case '4':
+		case '5': case '6': case '7': case '8': case '9':
+			return (ch - '0');
+		case 'A': case 'B': case 'C': case 'D': case 'E': case 'F':
+			return (ch - 'A' + 10);
+		case 'a': case 'b': case 'c': case 'd': case 'e': case 'f':
+			return (ch - 'a' + 10);
+		default: return -1;
+	}
+}
+
 
 typedef struct nodeType {
 	struct tokenType token;            	// 토큰 종류
@@ -27,45 +313,45 @@ int meaningfulToken(struct tokenType token);
  *  문법과 tbl이 확장된 경우, PGS의 출력을 확인하며 변경 사항을 적용해줘야 함.
  ***************************************************************************/
 enum nodeNumber {
-	ERROR_NODE, // ERROR_NODE가 0번으로 지정되어야 함.
-	ACTUAL_PARAM, ADD, ADD_ASSIGN, ARRAY_VAR, ASSIGN_OP,
-	CALL, COMPOUND_ST, CONST_NODE, DCL, DCL_ITEM,
-	DCL_LIST, DCL_SPEC, DIV, DIV_ASSIGN, EQ,
-	EXP_ST, FORMAL_PARA, FUNC_DEF, FUNC_HEAD,
+	ERROR_NODE,
+	ACTUAL_PARAM, ADD, ADD_ASSIGN, ARRAY_VAR, ASSIGN_OP, BREAK_ST,
+	CALL, CASE_ST, COMPOUND_ST, CONDITION_PART, CONST_TYPE, CONTINUE_ST, DCL, DCL_ITEM,
+	DCL_LIST, DCL_SPEC, DEFAULT_ST, DIV, DIV_ASSIGN, DO_WHILE_ST, EQ,
+	EXP_ST, FORMAL_PARA, FOR_ST, FUNC_DEF, FUNC_HEAD,
 	GE, GT, IDENT, IF_ELSE_ST, IF_ST,
-	INDEX, INT_NODE, LE, LOGICAL_AND, LOGICAL_NOT,
-	LOGICAL_OR, LT, MOD, MOD_ASSIGN, MUL,
+	INDEX, INIT_PART, INT_TYPE, LE, LOGICAL_AND, LOGICAL_NOT,
+	LOGICAL_OR, LT, MOD_ASSIGN, MUL,
 	MUL_ASSIGN, NE, NUMBER, PARAM_DCL, POST_DEC,
-	POST_INC, PRE_DEC, PRE_INC, PROGRAM, RETURN_ST,
-	SIMPLE_VAR, STAT_LIST, SUB, SUB_ASSIGN, UNARY_MINUS,
-	VOID_NODE, WHILE_ST
+	POST_INC, POST_PART, PRE_DEC, PRE_INC, PROGRAM, REMAINDER, RETURN_ST,
+	SIMPLE_VAR, STAT_LIST, SUB, SUB_ASSIGN, SWITCH_ST, UNARY_MINUS,
+	VOID_TYPE, WHILE_ST
 };
+
 
 char* nodeName[] = {
-   "ERROR_NODE",
-   "ACTUAL_PARAM", "ADD",         "ADD_ASSIGN",   "ARRAY_VAR",   "ASSIGN_OP",
-   "CALL",         "COMPOUND_ST", "CONST_NODE",   "DCL",         "DCL_ITEM",
-   "DCL_LIST",     "DCL_SPEC",    "DIV",          "DIV_ASSIGN",  "EQ",
-   "EXP_ST",      "FORMAL_PARA",  "FUNC_DEF",    "FUNC_HEAD",
+	"ERROR_NODE",
+   "ACTUAL_PARAM", "ADD",         "ADD_ASSIGN",   "ARRAY_VAR",   "ASSIGN_OP",   "BREAK_ST",
+   "CALL", "CASE_ST",    "COMPOUND_ST", "CONDITION_PART", "CONST_TYPE", "CONTINUE_ST",  "DCL",         "DCL_ITEM",
+   "DCL_LIST",     "DCL_SPEC",  "DEFAULT_ST",  "DIV",          "DIV_ASSIGN", "DO_WHILE_ST",  "EQ",
+   "EXP_ST",      "FORMAL_PARA", "FOR_ST",  "FUNC_DEF",    "FUNC_HEAD",
    "GE",           "GT",          "IDENT",        "IF_ELSE_ST",  "IF_ST",
-   "INDEX",        "INT_NODE",    "LE",           "LOGICAL_AND", "LOGICAL_NOT",
-   "LOGICAL_OR",   "LT",          "MOD",          "MOD_ASSIGN",  "MUL",
+   "INDEX",    "INIT_PART",    "INT_TYPE",    "LE",           "LOGICAL_AND", "LOGICAL_NOT",
+   "LOGICAL_OR",   "LT",               "MOD_ASSIGN",  "MUL",
    "MUL_ASSIGN",   "NE",          "NUMBER",       "PARAM_DCL",   "POST_DEC",
-   "POST_INC",     "PRE_DEC",     "PRE_INC",      "PROGRAM",     "RETURN_ST",
-   "SIMPLE_VAR",   "STAT_LIST",   "SUB",          "SUB_ASSIGN",  "UNARY_MINUS",
-   "VOID_NODE",    "WHILE_ST"
+   "POST_INC", "POST_PART",    "PRE_DEC",     "PRE_INC",      "PROGRAM",  "REMAINDER",   "RETURN_ST",
+   "SIMPLE_VAR",   "STAT_LIST",   "SUB",          "SUB_ASSIGN", "SWITCH_ST",  "UNARY_MINUS",
+   "VOID_TYPE",    "WHILE_ST"
 };
 
-// 문법이 확장되었을 경우 ruleName 역시 확장된 문법이 반영되어야 함.
 int ruleName[] = {
 	/* 0            1            2            3           4           */
 	   0,           PROGRAM,     0,           0,          0,
 	/* 5            6            7            8           9           */
 	   0,           FUNC_DEF,    FUNC_HEAD,   DCL_SPEC,   0,
 	/* 10           11           12           13          14          */
-	   0,           0,           0,           CONST_NODE, INT_NODE,
+	   0,           0,           0,           CONST_TYPE, INT_TYPE,
 	/* 15           16           17           18          19          */
-	   VOID_NODE,   0,           FORMAL_PARA, 0,          0,
+	   VOID_TYPE,   0,           FORMAL_PARA, 0,          0,
 	/* 20           21           22           23          24          */
 	   0,           0,           PARAM_DCL,   COMPOUND_ST,DCL_LIST,
 	/* 25           26           27           28          29          */
@@ -73,31 +359,37 @@ int ruleName[] = {
 	/* 30           31           32           33          34          */
 	   0,           DCL_ITEM,    DCL_ITEM,    SIMPLE_VAR, ARRAY_VAR,
 	/* 35           36           37           38          39          */
-	   0,           0,           STAT_LIST,   0,          0,
+	   0,           0,           0,           0,          0,
 	/* 40           41           42           43          44          */
 	   0,           0,           0,           0,          0,
 	/* 45           46           47           48          49          */
-	   0,           EXP_ST,      0,           0,          IF_ST,
+	   0,           0,           0,           0,          0,
 	/* 50           51           52           53          54          */
-	   IF_ELSE_ST,  WHILE_ST,    RETURN_ST,   0,          0,
+	   0,           EXP_ST,      0,           0,          CASE_ST,
 	/* 55           56           57           58          59          */
-	   ASSIGN_OP,   ADD_ASSIGN,  SUB_ASSIGN,  MUL_ASSIGN, DIV_ASSIGN,
+	   DEFAULT_ST,  CONTINUE_ST, BREAK_ST,    IF_ST,      IF_ELSE_ST,
 	/* 60           61           62           63          64          */
-	   MOD_ASSIGN,  0,           LOGICAL_OR,  0,          LOGICAL_AND,
+	   WHILE_ST,    DO_WHILE_ST, SWITCH_ST,   FOR_ST,     INIT_PART,
 	/* 65           66           67           68          69          */
-	   0,           EQ,          NE,          0,          GT,
+	 CONDITION_PART,POST_PART,   RETURN_ST,   0,          0,
 	/* 70           71           72           73          74          */
-	   LT,          GE,          LE,          0,          ADD,
+	   ASSIGN_OP,   ADD_ASSIGN,  SUB_ASSIGN,  MUL_ASSIGN, DIV_ASSIGN,
 	/* 75           76           77           78          79          */
-	   SUB,         0,           MUL,         DIV,        MOD,
+	   MOD_ASSIGN,  0,           LOGICAL_OR,  0,          LOGICAL_AND,
 	/* 80           81           82           83          84          */
-	   0,           UNARY_MINUS, LOGICAL_NOT, PRE_INC,    PRE_DEC,
+	   0,           EQ,          NE,          0,          GT,
 	/* 85           86           87           88          89          */
-	   0,           INDEX,       CALL,        POST_INC,   POST_DEC,
+	   LT,          GE,          LE,          0,          ADD,
 	/* 90           91           92           93          94          */
+	   ADD,         0,           MUL,         DIV,        REMAINDER,
+	/* 95           96           97           98          99          */
+	   0,           UNARY_MINUS, LOGICAL_NOT, PRE_INC,    PRE_DEC,
+    /* 100          101          102          103         104         */
+	   0,           INDEX,       CALL,        POST_INC,   POST_DEC,
+	/* 105          106          107          108         109         */
 	   0,           0,           ACTUAL_PARAM,0,          0,
-	/* 95           96           97                                   */
-	   0,           0,           0
+	/* 110          111          112                                  */
+	   0,           0,           0,
 };
 
 int sp;                               // stack pointer
@@ -105,8 +397,9 @@ int stateStack[PS_SIZE];              // state stack
 int symbolStack[PS_SIZE];             // symbol stack
 Node* valueStack[PS_SIZE];            // value stack
 
-Node* parser()
+Node* parser(char* sourceFilePath)
 {
+	sourceFile = fopen(sourceFilePath, "r");
 	extern int parsingTable[NO_STATES][NO_SYMBOLS + 1];
 	extern int leftSymbol[NO_RULES + 1], rightLength[NO_RULES + 1];
 	int entry, ruleNumber, lhs;
@@ -295,3 +588,10 @@ Node* buildTree(int nodeNumber, int rhsLength)
 	}
 	else return first;
 }
+
+// int main(int argc, char* args[]){
+// 	sourceFilePath = args[1];
+// 	sourceFile = fopen(sourceFilePath, "r");
+// 	parser();
+// 	return 0;
+// }

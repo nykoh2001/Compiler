@@ -1,3 +1,7 @@
+#include "Parser.c"
+
+FILE *astFile;
+
 void printNode(Node* pt, int indent);
 void printTree(Node* pt, int indent);
 
@@ -13,7 +17,6 @@ void printTree(Node* pt, int indent)
 
 void printNode(Node* pt, int indent)
 {
-	extern FILE* astFile;
 	int i;
 
 	for (i = 1; i <= indent; i++) fprintf(astFile, " ");
@@ -28,4 +31,12 @@ void printNode(Node* pt, int indent)
 		fprintf(astFile, " Nonterminal: %s", nodeName[i]);
 	}
 	fprintf(astFile, "\n");
+}
+
+int main (int argc, char* args[]) {
+	astFile = fopen("astFile.txt", "w");
+	char* sourceFilePath = args[1];
+	Node * AST_ROOT =  parser(sourceFilePath);
+	printTree(AST_ROOT, 4);
+	fclose(astFile);
 }
